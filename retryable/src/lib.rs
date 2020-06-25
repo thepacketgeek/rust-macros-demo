@@ -131,6 +131,29 @@ pub enum RetryDelay {
 mod tests {
     use super::*;
 
+    /// Macro to make testing retryable easier
+    /// ```
+    /// let eventually_succeed = succeed_after!(1);
+    /// assert!(eventually_succeed().is_err());
+    /// assert!(eventually_succeed().is_ok());
+    /// ```
+    #[macro_use]
+    macro_rules! succeed_after {
+        ($count:expr) => {{
+            let mut _fail_count = $count;
+            // Closure that fails 1 time, followed by success
+            let mut _func = move || {
+                if _fail_count > 0 {
+                    _fail_count -= 1;
+                    Err(())
+                } else {
+                    Ok(())
+                }
+            };
+            _func
+        }};
+    }
+
     #[test]
     fn test_wrapper() {
         // Closure that fails 1 time, followed by success
@@ -153,17 +176,8 @@ mod tests {
 
     /// Sanity check for how I'm checking eventual success
     #[test]
-    fn test_eventual_success() {
-        let mut fail_count = 3;
-        // Closure that fails 1 time, followed by success
-        let mut eventually_succeed = || {
-            if fail_count > 0 {
-                fail_count -= 1;
-                Err(())
-            } else {
-                Ok(())
-            }
-        };
+    fn test_succeed_after() {
+        let mut eventually_succeed = succeed_after!(3);
         assert!(eventually_succeed().is_err());
         assert!(eventually_succeed().is_err());
         assert!(eventually_succeed().is_err());
@@ -173,35 +187,16 @@ mod tests {
 
     #[test]
     fn test_retry_default() {
-        let mut should_fail: bool = true;
-        // Closure that fails 1 time, followed by success
-        let mut subsequently_fail = || {
-            if should_fail {
-                should_fail = false;
-                Err(())
-            } else {
-                Ok(())
-            }
-        };
-
-        let res = retry!(subsequently_fail);
+        let mut eventually_succeed = succeed_after!(1);
+        let res = retry!(eventually_succeed);
         assert!(res.is_ok());
     }
 
     #[test]
     fn test_retry_count_fail() {
-        let mut fail_count = 3;
-        // Closure that fails 1 time, followed by success
-        let mut subsequently_fail = || {
-            if fail_count >= 0 {
-                fail_count -= 1;
-                Err(())
-            } else {
-                Ok(())
-            }
-        };
+        let mut eventually_succeed = succeed_after!(3);
 
-        let res = retry!(subsequently_fail; count = 2);
+        let res = retry!(eventually_succeed; count = 2);
         assert!(res.is_err());
 
         let will_always_fail = || -> Result<(), ()> { Err(()) };
@@ -211,37 +206,17 @@ mod tests {
 
     #[test]
     fn test_retry_count_success() {
-        let mut fail_count = 2;
-        // Closure that fails 1 time, followed by success
-        let mut subsequently_fail = || {
-            if fail_count > 0 {
-                println!("fail!");
-                fail_count -= 1;
-                Err(())
-            } else {
-                Ok(())
-            }
-        };
-        let res = retry!(subsequently_fail; count = 3);
+        let mut eventually_succeed = succeed_after!(2);
+        let res = retry!(eventually_succeed; count = 3);
         assert!(res.is_ok());
     }
 
     #[test]
     fn test_retryable_simple() {
-        let mut fail_count = 2;
-        // Closure that fails 1 time, followed by success
-        let subsequently_fail = || {
-            if fail_count > 0 {
-                println!("fail!");
-                fail_count -= 1;
-                Err(())
-            } else {
-                Ok(())
-            }
-        };
+        let eventually_succeed = succeed_after!(2);
 
         let policy = RetryPolicy::with_retries(3);
-        let mut r = Retryable::new(subsequently_fail, policy);
+        let mut r = Retryable::new(eventually_succeed, policy);
         let res = r.try_call();
         assert!(res.is_ok());
     }
