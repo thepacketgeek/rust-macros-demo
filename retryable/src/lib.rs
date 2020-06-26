@@ -254,6 +254,9 @@ mod tests {
     use rand::Rng;
 
     /// Macro to make testing retryable easier
+    ///
+    /// Returns a closure that will fail for the given count,
+    /// afterwhich Ok(()) is returned for each call
     /// ```
     /// let eventually_succeed = succeed_after!(1);
     /// assert!(eventually_succeed().is_err());
@@ -262,15 +265,12 @@ mod tests {
     #[macro_use]
     macro_rules! succeed_after {
         ($count:expr) => {{
-            let mut _fail_count = $count;
-            // Closure that fails 1 time, followed by success
-            let mut _func = move || {
-                if _fail_count > 0 {
-                    _fail_count -= 1;
-                    Err(())
-                } else {
-                    Ok(())
+            let mut _iter = (0..$count).into_iter();
+            let _func = move || {
+                if let Some(_) = _iter.next() {
+                    return Err(());
                 }
+                Ok(())
             };
             _func
         }};
@@ -330,9 +330,7 @@ mod tests {
 
     #[test]
     fn test_retry_retries_fail() {
-        let mut eventually_succeed = succeed_after!(3);
-
-        let res = retry!(eventually_succeed; retries = 2);
+        let res = retry!(succeed_after!(3); retries = 2);
         assert!(res.is_err());
 
         let will_always_fail = || -> Result<(), ()> { Err(()) };
@@ -342,17 +340,15 @@ mod tests {
 
     #[test]
     fn test_retry_retries_success() {
-        let mut eventually_succeed = succeed_after!(2);
-        let res = retry!(eventually_succeed; retries = 3);
+        let mut eventually_succeed = succeed_after!(1);
+        let res = retry!(eventually_succeed);
         assert!(res.is_ok());
     }
 
     #[test]
     fn test_retryable_simple() {
-        let eventually_succeed = succeed_after!(2);
-
         let strategy = RetryStrategy::default().with_retries(3).to_owned();
-        let mut r = Retryable::new(eventually_succeed, strategy);
+        let mut r = Retryable::new(succeed_after!(2), strategy);
         let res = r.try_call();
         assert!(res.is_ok());
     }
@@ -377,14 +373,12 @@ mod tests {
     #[test]
     fn test_retryable_macro_args_delay() {
         let start = Instant::now();
-        let eventually_succeed = succeed_after!(2);
-        let res = retryable!(eventually_succeed; delay=3);
+        let res = retryable!(succeed_after!(2); delay=3);
         assert!(res.is_ok());
         assert!(start.elapsed() > Duration::from_secs(6));
 
         let start = Instant::now();
-        let mut eventually_succeed = succeed_after!(2);
-        let res = retryable!(move || {eventually_succeed()}; delay=3);
+        let res = retryable!(succeed_after!(2); delay=3);
         assert!(res.is_ok());
         assert!(start.elapsed() > Duration::from_secs(6));
     }
