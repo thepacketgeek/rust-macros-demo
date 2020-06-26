@@ -61,22 +61,25 @@ where
     F: FnMut() -> Result<T, E>,
 {
     inner: F,
-    policy: RetryPolicy,
+    strategy: RetryStrategy,
 }
 
 impl<F, T, E> Retryable<F, T, E>
 where
     F: FnMut() -> Result<T, E>,
 {
-    fn new(func: F, policy: RetryPolicy) -> Retryable<F, T, E> {
+    /// Wrap a given function/closure in a Retryable, with a given strategy
+    pub fn new(func: F, strategy: RetryStrategy) -> Retryable<F, T, E> {
         Self {
             inner: func,
-            policy,
+            strategy,
         }
     }
 
-    fn try_call(&mut self) -> Result<T, E> {
-        let mut retries = self.policy.retries;
+    /// Start calling the wrapped function, responding to Errors
+    /// as the specified strategy dictates
+    pub fn try_call(&mut self) -> Result<T, E> {
+        let mut retries = self.strategy.retries;
         loop {
             let res = (self.inner)();
             if res.is_ok() {
@@ -93,23 +96,31 @@ where
 
 /// Specification for how the retryable should behave
 ///
-/// Retries: The number of times to
-#[derive(Debug)]
-pub struct RetryPolicy {
+/// Retries: The number of times to retry after Err
+/// Delay: How long to wait after each Err before retrying
+#[derive(Clone, Debug)]
+pub struct RetryStrategy {
     retries: usize,
     delay: RetryDelay,
 }
 
-impl RetryPolicy {
-    pub fn with_retries(count: usize) -> Self {
-        Self {
-            retries: count,
-            ..Default::default()
-        }
+impl RetryStrategy {
+    pub fn new(retries: usize, delay: RetryDelay) -> Self {
+        Self { retries, delay }
+    }
+
+    pub fn with_retries(&mut self, retries: usize) -> &mut Self {
+        self.retries = retries;
+        self
+    }
+
+    pub fn with_delay(&mut self, delay: RetryDelay) -> &mut Self {
+        self.delay = delay;
+        self
     }
 }
 
-impl Default for RetryPolicy {
+impl Default for RetryStrategy {
     fn default() -> Self {
         Self {
             retries: 3,
@@ -118,13 +129,51 @@ impl Default for RetryPolicy {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum RetryDelay {
     Fixed(std::time::Duration),
-    Backoff {
-        initial_delay: std::time::Duration,
-        multiplier: u32,
-    },
+    Backoff { initial_delay: std::time::Duration },
+}
+
+/// A simple retry macro to immediately attempt a function call after failure
+///
+/// To use, pass a function and arguments:
+/// ```ignore
+/// retry!(my_falible_func, 0, "something");
+/// ```
+/// Default retry count is 3 (3rd failure will return Err())
+///
+/// Specify a different number of retries like:
+/// ```ignore
+/// retry!(my_falible_func, 0, "something"; 5); // 5 retries
+/// ```
+#[macro_export]
+macro_rules! retryable {
+    // Take a closure & count
+    ($f:expr; retries=$r:expr) => {{
+        let _strategy = RetryStrategy::default().with_retries($r).to_owned();
+        let mut _r = Retryable::new($f, _strategy);
+        _r.try_call()
+    }};
+    // Take a closure (default of 3 retries)
+    ($f:expr) => {{
+        retryable!($f; retries = 3)
+    }};
+    // Take a function ptr, variadic args, and retrie count
+    ($($args:expr$(,)?)+; retries=$r:expr) => {{
+        retryable!(|| { _wrapper!($($args,)*)}; retries=$r)
+
+        // This rule can hit the recursion limit for macros
+        // If that's a problem, we can remove some recursion like:
+        // let _strategy = RetryStrategy::default().with_retries($r).to_owned();
+        // let mut _r = Retryable::new(|| { _wrapper!($($args,)*)}, _strategy);
+        // _r.try_call()
+    }};
+    ($($args:expr$(,)?)+) => {{
+        retryable($($args)*; retries=3)
+    }};
+
+
 }
 
 #[cfg(test)]
@@ -152,6 +201,18 @@ mod tests {
             };
             _func
         }};
+    }
+
+    /// Test helper function
+    /// Given a failure rate percentage (0..=100),
+    /// fail with that probability
+    fn sometimes_fail(failure_rate: u8) -> Result<(), ()> {
+        assert!(failure_rate <= 100, "Failure rate is a % (0..=100)");
+        if rand::random::<u8>() < failure_rate {
+            Ok(())
+        } else {
+            Err(())
+        }
     }
 
     #[test]
@@ -215,9 +276,28 @@ mod tests {
     fn test_retryable_simple() {
         let eventually_succeed = succeed_after!(2);
 
-        let policy = RetryPolicy::with_retries(3);
-        let mut r = Retryable::new(eventually_succeed, policy);
+        let strategy = RetryStrategy::default().with_retries(3).to_owned();
+        let mut r = Retryable::new(eventually_succeed, strategy);
         let res = r.try_call();
+        assert!(res.is_ok());
+    }
+
+    #[test]
+    fn test_retryable_macro() {
+        let eventually_succeed = succeed_after!(2);
+        let res = retryable!(eventually_succeed);
+        assert!(res.is_ok());
+    }
+
+    #[test]
+    fn test_retryable_macro_args() {
+        let res = retryable!(sometimes_fail, 10; retries=100);
+        assert!(res.is_ok());
+    }
+
+    #[test]
+    fn test_retryable_macro_closure() {
+        let res = retryable!(|| {sometimes_fail(10)}; retries=100);
         assert!(res.is_ok());
     }
 }
