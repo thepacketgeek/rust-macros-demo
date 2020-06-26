@@ -1,3 +1,7 @@
+use std::time::{Duration, Instant};
+
+const DEFAULT_SLEEP_INTERVAL: Duration = Duration::from_millis(50);
+
 /// Expand a variadic number of macro args to a function call w/ args
 ///
 /// ```
@@ -28,11 +32,11 @@ macro_rules! _wrapper {
 ///
 /// Specify a different number of retries like:
 /// ```ignore
-/// retry!(my_falible_func, 0, "something"; 5); // 5 retries
+/// retry!(my_falible_func, 0, "something"; retries=5);
 /// ```
 #[macro_export]
 macro_rules! retry {
-    ($($args:expr$(,)?)+; count=$r:expr) => {{
+    ($($args:expr$(,)?)+; retries=$r:expr) => {{
         let mut retries = $r;
         loop {
             let res = _wrapper!($($args)*);
@@ -47,14 +51,14 @@ macro_rules! retry {
         }
     }};
     ($($args:expr$(,)?)+) => {{
-        retry!($($args,)*; count = 3)
+        retry!($($args,)*; retries = 3)
     }};
 }
 
 /// Retryable is an step up from the `retry!()` macro in that it allows for even more
 /// customization for:
 /// - Number of retries
-/// - Failure delay (and backoff strategy)
+/// - Failure delay (and interval calculation)
 /// - Immediate failure Error types (E.g. only retry for io::Error, otherwise fail immediately)
 pub struct Retryable<F, T, E>
 where
@@ -80,16 +84,27 @@ where
     /// as the specified strategy dictates
     pub fn try_call(&mut self) -> Result<T, E> {
         let mut retries = self.strategy.retries;
+        let mut next_run = Instant::now();
         loop {
+            while Instant::now() < next_run {
+                std::thread::sleep(DEFAULT_SLEEP_INTERVAL);
+            }
             let res = (self.inner)();
             if res.is_ok() {
                 break res;
             }
             if retries > 0 {
                 retries -= 1;
+                next_run = self.next_run_time();
                 continue;
             }
             break res;
+        }
+    }
+
+    fn next_run_time(&self) -> Instant {
+        match self.strategy.delay {
+            RetryDelay::Fixed(interval) => Instant::now().checked_add(interval).unwrap(),
         }
     }
 }
@@ -132,34 +147,80 @@ impl Default for RetryStrategy {
 #[derive(Clone, Debug)]
 pub enum RetryDelay {
     Fixed(std::time::Duration),
-    Backoff { initial_delay: std::time::Duration },
+    // TODO?: Exponential { initial_delay: std::time::Duration },
 }
 
 /// A simple retry macro to immediately attempt a function call after failure
 ///
 /// To use, pass a function and arguments:
 /// ```ignore
-/// retry!(my_falible_func, 0, "something");
+/// retryable!(my_falible_func, 0, "something");
 /// ```
 /// Default retry count is 3 (3rd failure will return Err())
 ///
-/// Specify a different number of retries like:
+/// Specify a different number of retries like
 /// ```ignore
-/// retry!(my_falible_func, 0, "something"; 5); // 5 retries
+/// retryable!(my_falible_func, 0, "something"; retries=5);
+/// ```
+///
+/// Or a delay time (in seconds)
+/// ```ignore
+/// retryable!(my_falible_func, 0, "something"; delay=3);
+/// ```
+///
+/// Or Both!
+/// ```ignore
+/// retryable!(|| { do_something(1, 2, 3, 4) }; retries=2; delay=3);
 /// ```
 #[macro_export]
 macro_rules! retryable {
-    // Take a closure & count
+    // Take a closure with retry count
+    // ```ignore
+    // retryable!(|| { do_something(1, 2, 3, 4) }; retries=2);
+    // ```
     ($f:expr; retries=$r:expr) => {{
         let _strategy = RetryStrategy::default().with_retries($r).to_owned();
         let mut _r = Retryable::new($f, _strategy);
         _r.try_call()
     }};
+    // Take a closure with delay time (seconds)
+    // ```ignore
+    // retryable!(|| { do_something(1, 2, 3, 4) }; delay=2);
+    // ```
+    ($f:expr; delay=$d:expr) => {{
+        let _delay = RetryDelay::Fixed(Duration::from_secs($d));
+        let _strategy = RetryStrategy::default().with_delay(_delay).to_owned();
+        let mut _r = Retryable::new($f, _strategy);
+        _r.try_call()
+    }};
+    // Take a closure with retry count & delay time (seconds)
+    // ```ignore
+    // retryable!(|| { do_something(1, 2, 3, 4) }; retries=2; delay=2);
+    // ```
+    ($f:expr; retries=$r:expr; delay=$d:expr) => {{
+        let _delay = RetryDelay::Fixed(Duration::from_secs($d));
+        let _strategy = RetryStrategy::default().with_delay(_delay).to_owned();
+        let mut _r = Retryable::new($f, _strategy);
+        _r.try_call()
+    }};
     // Take a closure (default of 3 retries)
+    // ```ignore
+    // retryable!(|| { do_something(1, 2, 3, 4) });
+    // ```
     ($f:expr) => {{
         retryable!($f; retries = 3)
     }};
-    // Take a function ptr, variadic args, and retrie count
+    // Take a function ptr with variadic args (default of 3 retries)
+    // ```ignore
+    // retryable!(my_falible_func, 0, "something"; retries=5);
+    // ```
+    ($($args:expr$(,)?)+) => {{
+        retryable($($args)*; retries=3)
+    }};
+    // Take a function ptr, variadic args, and retry count
+    // ```ignore
+    // retryable!(my_falible_func, 0, "something"; retries=5);
+    // ```
     ($($args:expr$(,)?)+; retries=$r:expr) => {{
         retryable!(|| { _wrapper!($($args,)*)}; retries=$r)
 
@@ -169,8 +230,19 @@ macro_rules! retryable {
         // let mut _r = Retryable::new(|| { _wrapper!($($args,)*)}, _strategy);
         // _r.try_call()
     }};
-    ($($args:expr$(,)?)+) => {{
-        retryable($($args)*; retries=3)
+    // Take a function ptr, variadic args, and delay time (seconds)
+    // ```ignore
+    // retryable!(my_falible_func, 0, "something"; delay=5);
+    // ```
+    ($($args:expr$(,)?)+; delay=$d:expr) => {{
+        retryable!(|| { _wrapper!($($args,)*)}; delay=$d)
+    }};
+    // Take a function ptr, variadic args, retry count, and delay time (seconds)
+    // ```ignore
+    // retryable!(my_falible_func, 0, "something"; retries=2; delay=5);
+    // ```
+    ($($args:expr$(,)?)+; retries=$r:expr; delay=$d:expr) => {{
+        retryable!(|| { _wrapper!($($args,)*)}; retries=$r; delay=$d)
     }};
 
 
@@ -179,6 +251,7 @@ macro_rules! retryable {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::Rng;
 
     /// Macro to make testing retryable easier
     /// ```
@@ -208,7 +281,9 @@ mod tests {
     /// fail with that probability
     fn sometimes_fail(failure_rate: u8) -> Result<(), ()> {
         assert!(failure_rate <= 100, "Failure rate is a % (0..=100)");
-        if rand::random::<u8>() < failure_rate {
+        let mut rng = rand::thread_rng();
+        let val = rng.gen_range(0u8, 100u8);
+        if val > failure_rate {
             Ok(())
         } else {
             Err(())
@@ -254,10 +329,10 @@ mod tests {
     }
 
     #[test]
-    fn test_retry_count_fail() {
+    fn test_retry_retries_fail() {
         let mut eventually_succeed = succeed_after!(3);
 
-        let res = retry!(eventually_succeed; count = 2);
+        let res = retry!(eventually_succeed; retries = 2);
         assert!(res.is_err());
 
         let will_always_fail = || -> Result<(), ()> { Err(()) };
@@ -266,9 +341,9 @@ mod tests {
     }
 
     #[test]
-    fn test_retry_count_success() {
+    fn test_retry_retries_success() {
         let mut eventually_succeed = succeed_after!(2);
-        let res = retry!(eventually_succeed; count = 3);
+        let res = retry!(eventually_succeed; retries = 3);
         assert!(res.is_ok());
     }
 
@@ -284,20 +359,33 @@ mod tests {
 
     #[test]
     fn test_retryable_macro() {
+        let start = Instant::now();
         let eventually_succeed = succeed_after!(2);
         let res = retryable!(eventually_succeed);
         assert!(res.is_ok());
+        assert!(start.elapsed() > Duration::from_secs(3));
     }
 
     #[test]
-    fn test_retryable_macro_args() {
-        let res = retryable!(sometimes_fail, 10; retries=100);
+    fn test_retryable_macro_args_retries() {
+        let res = retryable!(sometimes_fail, 10; retries = 15; delay = 1);
+        assert!(res.is_ok());
+        let res = retryable!(|| {sometimes_fail(10)}; retries = 15; delay = 1);
         assert!(res.is_ok());
     }
 
     #[test]
-    fn test_retryable_macro_closure() {
-        let res = retryable!(|| {sometimes_fail(10)}; retries=100);
+    fn test_retryable_macro_args_delay() {
+        let start = Instant::now();
+        let eventually_succeed = succeed_after!(2);
+        let res = retryable!(eventually_succeed; delay=3);
         assert!(res.is_ok());
+        assert!(start.elapsed() > Duration::from_secs(6));
+
+        let start = Instant::now();
+        let mut eventually_succeed = succeed_after!(2);
+        let res = retryable!(move || {eventually_succeed()}; delay=3);
+        assert!(res.is_ok());
+        assert!(start.elapsed() > Duration::from_secs(6));
     }
 }
