@@ -17,7 +17,8 @@ macro_rules! timeit_ext {
     ($n:ident ( $($args:expr $(,)?)*)) => {{
         let _start = std::time::Instant::now();
         $n($($args,)*);
-        eprintln!("Took {:.3} ms", _start.elapsed().as_millis());
+        // Use the function name (ident) in the log
+        eprintln!("'{}' took {:.3} ms", stringify!($n), _start.elapsed().as_millis());
     }};
 }
 
@@ -31,6 +32,7 @@ mod tests {
         timeit!(|| { std::thread::sleep(std::time::Duration::from_secs(1)) });
     }
 
+    /// Pass a prefix
     #[test]
     fn test_with_name() {
         timeit!(
