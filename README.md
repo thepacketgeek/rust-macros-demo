@@ -1,6 +1,6 @@
 # Rust Macros Demo
 
-A practical (*but not-exhaustive*) intro to declarative `macro_rules!` by building some helpful macros.
+Practical (*but not-exhaustive*) examples of declarative `macro_rules!`. For an introduction check out the [accompanying blog series](https://thepacketgeek.com/rust/macros/).
 
 ## [Timeit](./timeit)
 
