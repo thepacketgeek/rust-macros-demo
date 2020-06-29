@@ -70,20 +70,19 @@ This is going to be...
 
 Now that we see what this macro is doing, let's dig into how it works.
 
-## Implementing Timeit
+## Implementing timeit!
 The essence of the syntax `timeit!` is trying to create shorthand for is:
 
 ```rust
-let start_time = std::time::Instant::now();
-
-// Code to time goes here
-
-eprintln!("Took {:.3} ms", start_time.elapsed().as_millis());
+{
+    let start_time = std::time::Instant::now();
+    // Code to time goes here
+    eprintln!("Took {:.3} ms", start_time.elapsed().as_millis());
+}
 ```
 
-
-## Timeit for a Closure
-The first use case has the most straight-forward since the closer is matched in `macro_rules!` as a single `expr` match type:
+## Wrapping a Closure via Matching and Expanding
+The first use case has the most straight-forward since the closere is matched in `macro_rules!` as a single `expr` match type:
 
 ```rust
 macro_rules! timeit {
