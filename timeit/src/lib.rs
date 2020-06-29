@@ -1,6 +1,8 @@
 //! `timeit!()` macro for timing functions
 //!
-//! ```ignore
+//! ```rust
+//! use timeit::timeit;
+//!
 //! fn wait_for_it() -> String {
 //!     std::thread::sleep(std::time::Duration::from_secs(2));
 //!     return String::from("...Legendary!");
