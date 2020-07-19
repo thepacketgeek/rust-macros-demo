@@ -58,10 +58,10 @@ macro_rules! timeit {
     // timeit!(my_func, "My Func");
     // ```
     // > My Func took 2000 ms
-    ($e:expr, $n:tt) => {{
+    ($e:expr, $desc:literal) => {{
         let _start = std::time::Instant::now();
         let _res = $e();
-        eprintln!("{} took {:.3} ms", $n, _start.elapsed().as_millis());
+        eprintln!("{} took {:.3} ms", $desc, _start.elapsed().as_millis());
         _res
     }};
 }

@@ -112,13 +112,13 @@ With this info, we can see how to add an optional log prefix in the `timeit!` ma
 ```rust
 macro_rules! timeit {
     ($e:expr) => { /* block from above */ };
-    // New match rule that recives a `tt` match type (Token), which can be a `str`
-    ($e:expr, $n:tt) => {{
+    // New match rule that recives a `literal` match type, like a `&str`
+    ($e:expr, $desc:literal) => {{
         // This is the same as our previous rule
         let _start = std::time::Instant::now();
         let _res = $e();
-        // Except that we now use the `$n` str in our log output
-        eprintln!("{} took {:.3} ms", $n, _start.elapsed().as_millis());
+        // Except that we now use the `$desc` str in our log output
+        eprintln!("{} took {:.3} ms", $desc, _start.elapsed().as_millis());
         _res
     }};
 }
@@ -177,7 +177,7 @@ macro_rules! timeit {
         _res
     }};
     ($e:expr) => { /* block from above */ };
-    ($e:expr, $n:tt) => { /* block from above */ };
+    ($e:expr, $desc:literal) => { /* block from above */ };
 }
 ```
 
