@@ -13,12 +13,13 @@ const DEFAULT_SLEEP_INTERVAL: Duration = Duration::from_millis(50);
 /// assert_eq!(_wrapper!(double_sum, 4, 2,), 12);
 /// ```
 macro_rules! _wrapper {
+    // Single expression (like a function name or closure)
     ($f:expr) => {{
         $f()
     }};
     // Variadic number of args (Allowing trailing comma)
-    ($f:expr, $($args:expr$(,)?)*) => {{
-        $f($($args,)*)
+    ($f:expr, $( $args:expr $(,)? )* ) => {{
+        $f( $( $args, )* )
     }};
 }
 
@@ -26,20 +27,20 @@ macro_rules! _wrapper {
 ///
 /// To use, pass a function and arguments:
 /// ```ignore
-/// retry!(my_falible_func, 0, "something");
+/// retry!(my_fallible_func, 0, "something");
 /// ```
 /// Default retry count is 3 (3rd failure will return Err())
 ///
 /// Specify a different number of retries like:
 /// ```ignore
-/// retry!(my_falible_func, 0, "something"; retries=5);
+/// retry!(my_fallible_func, 0, "something"; retries=5);
 /// ```
 #[macro_export]
 macro_rules! retry {
-    ($($args:expr$(,)?)+; retries=$r:expr) => {{
+    ($( $args:expr$(,)? )+; retries=$r:expr) => {{
         let mut retries = $r;
         loop {
-            let res = _wrapper!($($args)*);
+            let res = _wrapper!($( $args, )*);
             if res.is_ok() {
                 break res;
             }
@@ -50,8 +51,9 @@ macro_rules! retry {
             break res;
         }
     }};
-    ($($args:expr$(,)?)+) => {{
-        retry!($($args,)*; retries = 3)
+    // Function & args only, use default of 3 retries
+    ($( $args:expr$(,)? )+) => {{
+        retry!($( $args, )*; retries = 3)
     }};
 }
 
@@ -154,18 +156,18 @@ pub enum RetryDelay {
 ///
 /// To use, pass a function and arguments:
 /// ```ignore
-/// retryable!(my_falible_func, 0, "something");
+/// retryable!(my_fallible_func, 0, "something");
 /// ```
 /// Default retry count is 3 (3rd failure will return Err())
 ///
 /// Specify a different number of retries like
 /// ```ignore
-/// retryable!(my_falible_func, 0, "something"; retries=5);
+/// retryable!(my_fallible_func, 0, "something"; retries=5);
 /// ```
 ///
 /// Or a delay time (in seconds)
 /// ```ignore
-/// retryable!(my_falible_func, 0, "something"; delay=3);
+/// retryable!(my_fallible_func, 0, "something"; delay=3);
 /// ```
 ///
 /// Or Both!
@@ -212,14 +214,14 @@ macro_rules! retryable {
     }};
     // Take a function ptr with variadic args (default of 3 retries)
     // ```ignore
-    // retryable!(my_falible_func, 0, "something"; retries=5);
+    // retryable!(my_fallible_func, 0, "something"; retries=5);
     // ```
     ($($args:expr$(,)?)+) => {{
         retryable($($args)*; retries=3)
     }};
     // Take a function ptr, variadic args, and retry count
     // ```ignore
-    // retryable!(my_falible_func, 0, "something"; retries=5);
+    // retryable!(my_fallible_func, 0, "something"; retries=5);
     // ```
     ($($args:expr$(,)?)+; retries=$r:expr) => {{
         retryable!(|| { _wrapper!($($args,)*)}; retries=$r)
@@ -232,14 +234,14 @@ macro_rules! retryable {
     }};
     // Take a function ptr, variadic args, and delay time (seconds)
     // ```ignore
-    // retryable!(my_falible_func, 0, "something"; delay=5);
+    // retryable!(my_fallible_func, 0, "something"; delay=5);
     // ```
     ($($args:expr$(,)?)+; delay=$d:expr) => {{
         retryable!(|| { _wrapper!($($args,)*)}; delay=$d)
     }};
     // Take a function ptr, variadic args, retry count, and delay time (seconds)
     // ```ignore
-    // retryable!(my_falible_func, 0, "something"; retries=2; delay=5);
+    // retryable!(my_fallible_func, 0, "something"; retries=2; delay=5);
     // ```
     ($($args:expr$(,)?)+; retries=$r:expr; delay=$d:expr) => {{
         retryable!(|| { _wrapper!($($args,)*)}; retries=$r; delay=$d)
@@ -266,13 +268,12 @@ mod tests {
     macro_rules! succeed_after {
         ($count:expr) => {{
             let mut _iter = (0..$count).into_iter();
-            let _func = move || {
-                if let Some(_) = _iter.next() {
+            move || {
+                if _iter.next().is_some() {
                     return Err(());
                 }
                 Ok(())
-            };
-            _func
+            }
         }};
     }
 
@@ -325,6 +326,13 @@ mod tests {
     fn test_retry_default() {
         let mut eventually_succeed = succeed_after!(1);
         let res = retry!(eventually_succeed);
+        assert!(res.is_ok());
+
+        let fallible = || sometimes_fail(10);
+        let res = retry!(fallible);
+        assert!(res.is_ok());
+
+        let res = retry!(sometimes_fail, 10);
         assert!(res.is_ok());
     }
 
