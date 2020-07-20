@@ -1,6 +1,6 @@
 # Retryable Macros
 
-This demo will cover two different implementations of similar logic, retrying fallible functions.
+This demo will cover two different implementations of similar logic, retrying fallible functions. For a more detailed walkthrough of building these macros, check out the [accompanying blog article](https://thepacketgeek.com/rust/macros/macro-matching-and-nesting/).
 
 - `retry!`
   - Wraps a given function with retry logc (*optional number of retries can be given*)
@@ -13,125 +13,21 @@ This demo will cover two different implementations of similar logic, retrying fa
 ## Use Cases
 Functions can fail. Some failures are persistent, like trying to open an invalid file path or parsing numeric values out of a string that doesn't contain numbers. Other failures are intermittent, like attempting to read data from a remote server. In the intermittent case it can be useful to have some logic to retry the attempted call in hopes for a successful result. This is exactly what our `retry!` and `retryable!` macros will do!
 
-Here's a function that fails with a given failure rate that we'll use to illustrate the retry functionality:
+# First Attempt with `retry!`
+The first macro, `retry!`, contains all the retry logic in the macro, expanding around the passed in function or closure.
+
+## _Wrapper macro
+To support wrapping closures and functions, and to keep the `retry!` macro_rules implementation clean, we'll create another macro (`_wrapper!`) for the following use-cases:
 
 ```rust
-use rand::Rng;
+let res = retry!(|| { sometimes_fail(10) });
+assert!(res.is_ok());
 
-/// Given a failure rate percentage (0..=100),
-/// fail with that probability
-fn sometimes_fail(failure_rate: u8) -> Result<(), ()> {
-    assert!(failure_rate <= 100, "Failure rate is a % (0..=100)");
-    let mut rng = rand::thread_rng();
-    let val = rng.gen_range(0u8, 100u8);
-    if val > failure_rate {
-        Ok(())
-    } else {
-        Err(())
-    }
-}
-```
-
-With a given failure rate of 50%, we could hope that retrying the function call would pass given 3 or more retries:
-```rust
-#[test]
-fn test_retry() {
-    // Closure invocation
-    let fallible = || {
-      sometimes_fail(10)
-    };
-    let res = retry!(fallible; retries = 3);
-    assert!(res.is_ok());
-
-    // Alternate func + args invocation
-    let res = retry!(sometimes_fail, 10; retries = 3);
-    assert!(res.is_ok());
-}
-```
-
-# A First Attempt
-Before we dive into writing our `retry!` macro, let's look at what retrying a fallible function looks like in Rust. A helpful way to approach writing macros is to:
-
-- Write the code in non-macro form
-- Look at what parts should/could be parameterized
-- Build a macro for a specific use case
-- Expand to include additional use cases when it makes sense
-
-## Retry Logic
-A pre-req for our retryable logic is that the function or closure the code is retrying should return `Result`. This allows us to check the `Result` variant (`Ok`/`Err`) and retry accordingly. A [example of this is](https://play.rust-lang.org/?version=stable&mode=debug&edition=2018&gist=1d7273b8ce7ac487ca5e1e23127c4c42):
-
-```rust
-let mut retries = 3;  // How many times to retry on error
-
-let func = || { sometimes_fail(10) };
-// Loop until we hit # of retries or success
-let res = loop {
-    // Run our function, capturing the Result in `res`
-    let res = func();
-    // Upon success, break out the loop and return the `Result::Ok`
-    if res.is_ok() {
-        break res;
-    }
-    // Otherwise, decrement retries and loop around again
-    if retries > 0 {
-        retries -= 1;
-        continue;
-    }
-    // When retries have been exhausted, finally return the `Result::Err`
-    break res;
-};
-
-assert!res.is_ok());
-```
-
-One very clear parameter for this macro is the function that's being called (in this case, `sometimes_fail`). Turning this into macro form would look something like:
-
-```rust
-macro_rules! retry {
-    ($f:expr) => {{
-        let mut retries = 3;
-        loop {
-            let res = $f();
-            if res.is_ok() {
-                break res;
-            }
-            if retries > 0 {
-                retries -= 1;
-                continue;
-            }
-            break res;
-        }
-    }};
-}
-```
-
-This mostly looks similar to our non-macro code above, but I'll explain the match rule `($f:expr)` a bit. This rule will only allow a single expression to be passed into the macro. Additionally, since we're eventually calling the `expr` like `$f()`, the expression must be something that results in a function. So a closure seems like a perfect fit and this macro can be used like ([playground](https://play.rust-lang.org/?version=stable&mode=debug&edition=2018&gist=4c42053cf00e6affb9e26ab5acb163d9)):
-
-```rust
-let res = retry!(|| sometimes_fail(10));
-assert!res.is_ok());
-```
-
-Currently, we can't pass a function directly (E.g. `retry!(sometimes_fail(10)`) as the macro expansion would end up like:
-
-```rust
-// ...
-    let res = sometimes_fail(10)();
-// ...
-```
-
-And we can't call the `Result` that `sometimes_fail(10)` returns. To make this work we should look at using yet another macro to coerce closures & functions into a common form for the `retry!` macro.
-
-## Nesting Macros
-To keep the `retry!` macro_rules implementation clean, we'll create another macro (`_wrapper!`) to faciliate the passing of closures **or** functions with arguments which will add this additional use case to our examples above:
-
-```rust
-// Alternate func + args invocation
-let res = retry!(sometimes_fail(10));
+let res = retry!(sometimes_fail, 10; retries = 3);
 assert!(res.is_ok());
 ```
 
-Let's implement the case covered in `retry!` already:
+The implementation with match rules for each case looks like:
 
 ```rust
 macro_rules! _wrapper {
@@ -139,33 +35,14 @@ macro_rules! _wrapper {
     ($f:expr) => {{
         $f()
     }};
-}
-```
-
-I'm using `_wrapper` as the name here to signal that it's intended to be use internally by the `retry!` macro and won't be exported by this library (perhaps a bad habit coming from Python). We can now use this example to get the same functionality as the prior `retry!` macro example:
-
-```rust
-macro_rules! retry {
-    ($f:expr) => {{
-        let mut retries = 3;
-        loop {
-            let res = _wrapper!($f);
-            if res.is_ok() {
-                break res;
-            }
-            if retries > 0 {
-                retries -= 1;
-                continue;
-            }
-            break res;
-        }
+    // Variadic number of args (Allowing trailing comma)
+    ($f:expr, $( $args:expr $(,)? )* ) => {{
+        $f( $( $args, )* )
     }};
 }
 ```
 
-As far as functionality goes, nothing has been added here, but this will enable us to build matching logic for our multiple use-cases within `_wrapper!` instead of duplicating code in `retry!` for different match rules.
-
-### Repeating matches
+## Repeating matches
 Something we learned with the `timeit!` macro was that we can match on repeating items, and then add code-expansion for each item. We'll use that same trick here to match on multiple arguments for the case of a function & args being passed into `retry!`:
 
 ```rust
@@ -200,4 +77,98 @@ Which expands to:
 my_func(10, 20,)
 ```
 
-With these two match rules inside `_wrapper!`, we can now successfully use `retry!` with all of the use cases! Check out the [final implementation](https://github.com/thepacketgeek/rust-macros-demo/blob/master/retryable/src/lib.rs#L39) and [accompanying tests here](https://github.com/thepacketgeek/rust-macros-demo/blob/master/retryable/src/lib.rs#L326).
+# Second Attempt with `retryable!`
+The `retry!` macro contained all the retry logic in the macro. As the logic gains capabilities (like delay time and backoff strategy), the macro code grows and becomes more complex. Another approach to retrying functions is to create code to handle retries outside of macros, and use a macro to make setting up the usage of our retry logic easier.
+
+## Retryable & RetryStrategy
+Forgoing macros for a bit, let's setup some retry structs and implementations. First is a `Retryable` struct to contain our function/closure to retry, and a `RetryStrategy` with options for retrying (number of retries, delay, etc.):
+
+```rust
+pub struct Retryable<F, T, E>
+where
+    F: FnMut() -> Result<T, E>,
+{
+    inner: F,
+    strategy: RetryStrategy,
+}
+
+/// Specification for how the retryable should behave
+pub struct RetryStrategy {
+    retries: usize,
+    delay: RetryDelay,
+}
+
+pub enum RetryDelay {
+    Fixed(std::time::Duration),
+    // TODO: More options here
+}
+```
+
+The core of our implementation for this struct looks like the retry logic from `retry!`, although we now use the delay options from `RetryStrategy`.
+
+```rust
+impl<F, T, E> Retryable<F, T, E>
+where
+    F: FnMut() -> Result<T, E>,
+{
+    /// Start calling the wrapped function, responding to Errors
+    /// as the specified strategy dictates
+    pub fn try_call(&mut self) -> Result<T, E> {
+        let mut retries = self.strategy.retries;
+        let mut delay_time = Duration::from_millis(0);
+        loop {
+            std::thread::sleep(delay_time);
+            let res = (self.inner)();
+            if res.is_ok() {
+                break res;
+            }
+            if retries > 0 {
+                retries -= 1;
+                delay_time = self.next_run_time();
+                continue;
+            }
+            break res;
+        }
+    }
+
+    fn next_run_time(&self) -> Duration {
+        match self.strategy.delay {
+            RetryDelay::Fixed(delay) => delay,
+        }
+    }
+}
+```
+
+Breaking out this logic into the `RetryStrategy` gives us much more flexibility with retrying, but now we have a problem with a more tedius setup:
+
+```rust
+let strategy = RetryStrategy::default().with_retries(3).to_owned();
+let mut r = Retryable::new(succeed_after!(2), strategy);
+let res = r.try_call();
+assert!(res.is_ok());
+```
+
+## Automating Retryable Setup
+Luckily for us we have an awesome tool in the toolbox that we can use to make this setup much easier: a macro! Using some similar matching rules we used with `retry!`, we can setup a very flexible macro to allow for optional specification of retries:
+
+```rust
+macro_rules! retryable {
+    // Take a closure with retry count
+    // ```ignore
+    // retryable!(|| { do_something(1, 2, 3, 4) }; retries=2);
+    // ```
+    ($f:expr; retries=$r:expr) => {{
+        let _strategy = RetryStrategy::default().with_retries($r).to_owned();
+        let mut _r = Retryable::new($f, _strategy);
+        _r.try_call()
+    }};
+    // Take a function ptr, variadic args, and retry count
+    // ```ignore
+    // retryable!(my_fallible_func, 0, "something"; retries=5);
+    // ```
+    ($( $args:expr $(,)? )+; retries=$r:expr) => {{
+        retryable!(|| { _wrapper!($($args,)*)}; retries=$r)
+    }};
+```
+
+Much better!! Check out the [full implementation](https://github.com/thepacketgeek/rust-macros-demo/blob/master/retryable/src/lib.rs#L174) to see how the macro also supports `delay` timers and more.

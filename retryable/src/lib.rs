@@ -1,6 +1,4 @@
-use std::time::{Duration, Instant};
-
-const DEFAULT_SLEEP_INTERVAL: Duration = Duration::from_millis(50);
+use std::time::Duration;
 
 /// Expand a variadic number of macro args to a function call w/ args
 ///
@@ -37,7 +35,7 @@ macro_rules! _wrapper {
 /// ```
 #[macro_export]
 macro_rules! retry {
-    ($( $args:expr$(,)? )+; retries=$r:expr) => {{
+    ($( $args:expr$(,)? )+; retries=$r:literal) => {{
         let mut retries = $r;
         loop {
             let res = _wrapper!($( $args, )*);
@@ -86,27 +84,25 @@ where
     /// as the specified strategy dictates
     pub fn try_call(&mut self) -> Result<T, E> {
         let mut retries = self.strategy.retries;
-        let mut next_run = Instant::now();
+        let mut delay_time = Duration::from_millis(0);
         loop {
-            while Instant::now() < next_run {
-                std::thread::sleep(DEFAULT_SLEEP_INTERVAL);
-            }
+            std::thread::sleep(delay_time);
             let res = (self.inner)();
             if res.is_ok() {
                 break res;
             }
             if retries > 0 {
                 retries -= 1;
-                next_run = self.next_run_time();
+                delay_time = self.next_run_time();
                 continue;
             }
             break res;
         }
     }
 
-    fn next_run_time(&self) -> Instant {
+    fn next_run_time(&self) -> Duration {
         match self.strategy.delay {
-            RetryDelay::Fixed(interval) => Instant::now().checked_add(interval).unwrap(),
+            RetryDelay::Fixed(delay) => delay,
         }
     }
 }
@@ -254,6 +250,7 @@ macro_rules! retryable {
 mod tests {
     use super::*;
     use rand::Rng;
+    use std::time::Instant;
 
     /// Macro to make testing retryable easier
     ///
