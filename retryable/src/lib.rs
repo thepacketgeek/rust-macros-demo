@@ -242,8 +242,6 @@ macro_rules! retryable {
     ($($args:expr$(,)?)+; retries=$r:expr; delay=$d:expr) => {{
         retryable!(|| { _wrapper!($($args,)*)}; retries=$r; delay=$d)
     }};
-
-
 }
 
 #[cfg(test)]

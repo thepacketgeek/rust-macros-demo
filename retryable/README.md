@@ -171,4 +171,12 @@ macro_rules! retryable {
     }};
 ```
 
-Much better!! Check out the [full implementation](https://github.com/thepacketgeek/rust-macros-demo/blob/master/retryable/src/lib.rs#L174) to see how the macro also supports `delay` timers and more.
+Check out the [full implementation](https://github.com/thepacketgeek/rust-macros-demo/blob/master/retryable/src/lib.rs#L174) which adds options for passing `retries` and `delay` args for more advanced usage that is similar our previous `retry!` macro:
+
+```rust
+let res = retryable!(sometimes_fail, 10; retries = 15; delay = 1);
+assert!(res.is_ok());
+
+let res = retryable!(|| {sometimes_fail(10)}; retries = 15; delay = 1);
+assert!(res.is_ok());
+```
